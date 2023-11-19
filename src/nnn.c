@@ -3342,16 +3342,16 @@ static int matches(const char *fltr)
 }
 
 /*
- * Return the position of the matching entry or 0 otherwise
+ * Return the position of the matching entry or def otherwise
  * Note there's no NULL check for fname
  */
-static int dentfind(const char *fname, int n)
+static int dentfind(const char *fname, int n, int def)
 {
 	for (int i = 0; i < n; ++i)
 		if (xstrcmp(fname, pdents[i].name) == 0)
 			return i;
 
-	return 0;
+	return def;
 }
 
 static int filterentries(char *path, char *lastname)
@@ -3366,7 +3366,7 @@ static int filterentries(char *path, char *lastname)
 
 	if (ndents && (ln[0] == FILTER || ln[0] == RFILTER) && *pln) {
 		if (matches(pln) != -1) {
-			move_cursor(dentfind(lastname, ndents), 0);
+			move_cursor(dentfind(lastname, ndents, 0), 0);
 			redraw(path);
 		}
 
@@ -5394,7 +5394,7 @@ static char *readpipe(int fd, char *ctxnum, char **path)
 	return nextpath;
 }
 
-static bool run_plugin(char **path, const char *file, char *runfile, char **lastname, char **lastdir)
+static bool run_plugin(char **path, const char *file, char *runfile, char **lastname, char **lastdir, bool *cd)
 {
 	pid_t p;
 	char ctx = 0;
@@ -5475,8 +5475,11 @@ static bool run_plugin(char **path, const char *file, char *runfile, char **last
 	while (rfd == -1 && errno == EINTR);
 
 	nextpath = readpipe(rfd, &ctx, path);
-	if (nextpath)
+	if (nextpath) {
 		set_smart_ctx(ctx, nextpath, path, runfile, lastname, lastdir);
+	} else {
+		*cd = FALSE;
+	}
 
 	close(rfd);
 
@@ -5991,7 +5994,7 @@ exit:
 	return ndents;
 }
 
-static void populate(char *path, char *lastname)
+static void populate(char *path, char *lastname, bool cd)
 {
 #ifdef DEBUG
 	struct timespec ts1, ts2;
@@ -6014,7 +6017,24 @@ static void populate(char *path, char *lastname)
 
 	/* Find cur from history */
 	/* No NULL check for lastname, always points to an array */
-	move_cursor(*lastname ? dentfind(lastname, ndents) : 0, 0);
+	int target;
+	if (*lastname) {
+		target = dentfind(lastname, ndents, -1);
+		/* If we failed to find the previous filename, and we didn't change directories, */
+		/* default to the previous cursor position. This way, when a file is renamed by */
+		/* a plugin, the cursor does not jump to the top of the directory. */
+		if (target == -1) {
+			target = cur;
+			/* If files were removed from the directory, make sure we do not overflow. */
+			if (target >= ndents) {
+				target = ndents - 1;
+			}
+		}
+	} else {
+		target = 0;
+	}
+
+	move_cursor(target, 0);
 
 	// Force full redraw
 	last_curscroll = -1;
@@ -6887,9 +6907,11 @@ begin:
 		} else
 			cfgsort[cfg.curctx] = cfgsort[CTX_MAX];
 	}
+
+	populate(path, lastname, cd);
+
 	cd = TRUE;
 
-	populate(path, lastname);
 	if (g_state.interrupt) {
 		g_state.interrupt = cfg.apparentsz = cfg.blkorder = 0;
 		blk_shift = BLK_SHIFT_512;
@@ -7122,7 +7144,7 @@ nochange:
 					clearfilter();
 
 					if (chdir(path) == -1
-					    || !run_plugin(&path, pent->name, runfile, &lastname, &lastdir)) {
+					    || !run_plugin(&path, pent->name, runfile, &lastname, &lastdir, &cd)) {
 						DPRINTF_S("plugin failed!");
 					}
 
@@ -7452,7 +7474,7 @@ nochange:
 				}
 
 				ENTSORT(pdents, ndents, entrycmpfn);
-				move_cursor(ndents ? dentfind(lastname, ndents) : 0, 0);
+				move_cursor(ndents ? dentfind(lastname, ndents, 0) : 0, 0);
 			}
 			continue;
 		case SEL_STATS: // fallthrough
@@ -7940,7 +7962,7 @@ nochange:
 					r = TRUE;
 
 				if (!run_plugin(&path, tmp, (ndents ? pdents[cur].name : NULL),
-							 &lastname, &lastdir)) {
+							 &lastname, &lastdir, &cd)) {
 					printwait(messages[MSG_FAILED], &presel);
 					goto nochange;
 				}

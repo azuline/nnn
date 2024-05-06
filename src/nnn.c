@@ -2856,6 +2856,17 @@ static void write_lastdir(const char *curpath, const char *outfile)
  */
 static int xstricmp(const char * const s1, const char * const s2)
 {
+	/* Custom fork hardcodes. Sort !All Tracks to the top and '^' to the
+     * bottom. */
+	if (strcmp(s1, "!All Tracks") == 0)
+		return -1;
+	if (strcmp(s2, "!All Tracks") == 0)
+		return 1;
+	if (*s1 == '^' && *s2 != '^')
+		return 1;
+	if (*s1 != '^' && *s2 == '^')
+		return -1;
+
 	char *p1, *p2;
 
 	long long v1 = strtoll(s1, &p1, 10);
